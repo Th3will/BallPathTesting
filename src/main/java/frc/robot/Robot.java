@@ -6,11 +6,14 @@ package frc.robot;
 
 import com.ctre.phoenix.motorcontrol.ControlMode;
 import com.ctre.phoenix.motorcontrol.DemandType;
+import com.ctre.phoenix.motorcontrol.NeutralMode;
 import com.ctre.phoenix.motorcontrol.can.WPI_TalonFX;
 
 import edu.wpi.first.math.controller.SimpleMotorFeedforward;
 import edu.wpi.first.math.system.plant.DCMotor;
+import edu.wpi.first.math.trajectory.TrapezoidProfile;
 import edu.wpi.first.math.util.Units;
+import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.TimedRobot;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
@@ -37,9 +40,20 @@ public class Robot extends TimedRobot {
   private SimpleMotorFeedforward frontFeedforward;
   private SimpleMotorFeedforward rearFeedforward;
 
+  private final TrapezoidProfile.Constraints m_constraints =
+      new TrapezoidProfile.Constraints(1.75, 0.75);
+  private TrapezoidProfile.State m_goal = new TrapezoidProfile.State();
+  private TrapezoidProfile.State m_setpoint = new TrapezoidProfile.State();
+
   private double prevTime;
   private double frontPrevOmega = 0.0;
   private double rearPrevOmega = 0.0;
+
+  private double feederSpeed = 1.0;
+
+  private static final DigitalInput LauncherBeamBreak = new DigitalInput(2);
+  private static final DigitalInput TopBeamBreak = new DigitalInput(1);
+  private boolean topFilled = false;
 
 
   /**
@@ -59,6 +73,9 @@ public class Robot extends TimedRobot {
 
     frontMotor = new WPI_TalonFX(0);
     rearMotor = new WPI_TalonFX(1);
+
+    frontMotor.setNeutralMode(NeutralMode.Coast);
+    rearMotor.setNeutralMode(NeutralMode.Coast);
 
     // Voltage Comp Satuation
     frontMotor.configVoltageCompSaturation(12);
@@ -112,37 +129,34 @@ public class Robot extends TimedRobot {
    */
   @Override
   public void robotPeriodic() {
-    double curTime = Timer.getFPGATimestamp();
+    // double curTime = Timer.getFPGATimestamp();
 
-    lowerFalcon.set(SmartDashboard.getNumber("Feed Power", 0.0));
-    SmartDashboard.putNumber("Top Current", upperFalcon.getStatorCurrent());
-    SmartDashboard.putNumber("Bottom Current", lowerFalcon.getStatorCurrent());
+    // // lowerFalcon.set(SmartDashboard.getNumber("Feed Power", 0.0));
+    // SmartDashboard.putNumber("Top Current", upperFalcon.getStatorCurrent());
+    // SmartDashboard.putNumber("Bottom Current", lowerFalcon.getStatorCurrent());
 
-    // Velocity
+    // // Velocity
     SmartDashboard.putNumber("Front Motor Velocity RPM", getVelocityRPM(frontMotor));
     SmartDashboard.putNumber("Rear Motor Velocity RPM", getVelocityRPM(rearMotor));
 
-    // MOI
-    double frontOmega = getVelocityRadS(frontMotor);
+    SmartDashboard.putBoolean("Launcher", !LauncherBeamBreak.get());
+    SmartDashboard.putBoolean("EWFOJIJ", !TopBeamBreak.get());
 
-    SmartDashboard.putNumber("Front Motor Acceleration", calculateWheelAcceleration(frontMotor, frontOmega, frontPrevOmega, curTime, prevTime));
-    SmartDashboard.putNumber("Front Motor Velocity RadS", frontOmega);
 
-    prevTime = curTime;
-    frontPrevOmega = frontOmega;
+    // // MOI
+    // double frontOmega = getVelocityRadS(frontMotor);
 
-    // Control Logic
-    if (SmartDashboard.getBoolean("Power Mode", false)) {
-      double power = SmartDashboard.getNumber("Shooter Power", 0.0);
+    // SmartDashboard.putNumber("Front Motor Acceleration", calculateWheelAcceleration(frontMotor, frontOmega, frontPrevOmega, curTime, prevTime));
+    // SmartDashboard.putNumber("Front Motor Velocity RadS", frontOmega);
 
-      frontMotor.set(ControlMode.PercentOutput, power);
-      rearMotor.set(ControlMode.PercentOutput, power);
-    } else {
-      double velocitySetpoint = SmartDashboard.getNumber("Velocity Setpoint", 0.0);
+    // prevTime = curTime;
+    // frontPrevOmega = frontOmega;
 
-      frontMotor.set(ControlMode.Velocity, Conversions.RPMToFalcon(velocitySetpoint, 1), DemandType.ArbitraryFeedForward, frontFeedforward.calculate(Units.rotationsPerMinuteToRadiansPerSecond(velocitySetpoint), 0.0) / 12.0);
-      rearMotor.set(ControlMode.Velocity, Conversions.RPMToFalcon(velocitySetpoint, 1), DemandType.ArbitraryFeedForward, rearFeedforward.calculate(Units.rotationsPerMinuteToRadiansPerSecond(velocitySetpoint), 0.0) / 12.0);
-    }
+    // // Control Logic
+    // /*if topFilled == false run bot feeder and top until it hits top in which case topFilled = true and stop first motor, 
+    // then ramp shooter and wait then   */
+    // var profile = new TrapezoidProfile(m_constraints, m_goal, m_setpoint);
+     
   }
 
   /**
@@ -160,20 +174,29 @@ public class Robot extends TimedRobot {
     m_autoSelected = m_chooser.getSelected();
     // m_autoSelected = SmartDashboard.getString("Auto Selector", kDefaultAuto);
     System.out.println("Auto selected: " + m_autoSelected);
+    feederSpeed = 0.3;
+
   }
 
   /** This function is called periodically during autonomous. */
   @Override
   public void autonomousPeriodic() {
-    switch (m_autoSelected) {
-      case kCustomAuto:
-        // Put custom auto code here
-        break;
-      case kDefaultAuto:
-      default:
-        // Put default auto code here
-        break;
+    if (!TopBeamBreak.get()) {
+      feederSpeed = 0.15;
+    } else if (!LauncherBeamBreak.get()) {
+      feederSpeed = 0.0;
+
+      // double velocitySetpoint = -3200;
+      
+      // frontMotor.set(ControlMode.Velocity, Conversions.RPMToFalcon(velocitySetpoint, 1), DemandType.ArbitraryFeedForward, frontFeedforward.calculate(Units.rotationsPerMinuteToRadiansPerSecond(velocitySetpoint), 0.0) / 12.0);
+      // rearMotor.set(ControlMode.Velocity, Conversions.RPMToFalcon(velocitySetpoint, 1), DemandType.ArbitraryFeedForward, rearFeedforward.calculate(Units.rotationsPerMinuteToRadiansPerSecond(velocitySetpoint), 0.0) / 12.0);
+
+      // if (getVelocityRPM(frontMotor) >= 3100) {
+      //   feederSpeed = 1.0;
+      // }
     }
+
+    lowerFalcon.set(feederSpeed);
   }
 
   /** This function is called once when teleop is enabled. */
